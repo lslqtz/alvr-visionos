@@ -1575,7 +1575,7 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             }
             
             if let videoFormat = EventHandler.shared.videoFormat {
-                let nextYuvTransform = VideoHandler.getYUVTransformForVideoFormat(videoFormat)
+                let nextYuvTransform = VideoHandler.getYUVTransformForVideoFormat(videoFormat, isRealityKit: true && !renderer.hdrEnabled)
                 if nextYuvTransform != renderer.currentYuvTransform {
                     needsPipelineRebuild = true
                 }

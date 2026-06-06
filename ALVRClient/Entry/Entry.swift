@@ -144,20 +144,7 @@ struct Entry: View {
                             .font(.system(size: 10))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    
-                    HStack {
-                        Text("Color Gamut")
-                        Picker("Color Gamut", selection: $gStore.settings.colorGamutMode) {
-                            ForEach(ColorGamutMode.allCases, id: \.self) { gamut in
-                                Text(gamut.rawValue).tag(gamut)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .onChange(of: gStore.settings.colorGamutMode) {
-                            saveAction()
-                        }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+
                 }
                 .frame(minWidth: 450)
                 .padding()

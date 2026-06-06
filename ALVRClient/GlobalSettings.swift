@@ -7,14 +7,6 @@
 import Foundation
 import SwiftUI
 
-enum ColorGamutMode: String, Codable, CaseIterable {
-    case auto = "Auto"
-    case bt709Full = "BT.709 Full"
-    case bt709Limited = "BT.709 Limited"
-    case bt2020Full = "BT.2020 Full"
-    case bt2020Limited = "BT.2020 Limited"
-}
-
 struct GlobalSettings: Codable {
     var keepSteamVRCenter: Bool = false
     var showHandsOverlaid: Bool = false
@@ -40,7 +32,6 @@ struct GlobalSettings: Codable {
     var lastUsedAppVersion = "never launched"
     var chaperoneDistanceCm: Int = 0
     var showPerformanceHud: Bool = false
-    var colorGamutMode: ColorGamutMode = .auto
     
     init() {}
     
@@ -71,7 +62,6 @@ struct GlobalSettings: Codable {
         self.lastUsedAppVersion = try container.decodeIfPresent(String.self, forKey: .lastUsedAppVersion) ?? self.lastUsedAppVersion
         self.chaperoneDistanceCm = try container.decodeIfPresent(Int.self, forKey: .chaperoneDistanceCm) ?? self.chaperoneDistanceCm
         self.showPerformanceHud = try container.decodeIfPresent(Bool.self, forKey: .showPerformanceHud) ?? self.showPerformanceHud
-        self.colorGamutMode = try container.decodeIfPresent(ColorGamutMode.self, forKey: .colorGamutMode) ?? self.colorGamutMode
     }
 }
 

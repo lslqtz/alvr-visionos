@@ -814,7 +814,7 @@ class Renderer {
             }
             
             if let videoFormat = EventHandler.shared.videoFormat {
-                let nextYuvTransform = VideoHandler.getYUVTransformForVideoFormat(videoFormat)
+                let nextYuvTransform = VideoHandler.getYUVTransformForVideoFormat(videoFormat, isRealityKit: isRealityKit && !hdrEnabled)
                 if nextYuvTransform != currentYuvTransform {
                     needsPipelineRebuild = true
                 }

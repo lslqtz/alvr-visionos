@@ -434,6 +434,10 @@ final class CameraModel: NSObject, ObservableObject {
         // Convert Vision normalized coordinates to image pixel coordinates
         // We assume the pixel buffer orientation used above (.leftMirrored) and size from the latest frame.
         Task { @MainActor in
+            self.frameIdx += 1
+            if self.frameIdx % 90 == 0 {
+                print("CameraView handleFaceLandmarks: frameIdx = \(self.frameIdx), detected \(results.count) faces.")
+            }
             guard let pixelBuffer = self.currentCroppedPixelbuffer else {
                 self.detectedFaces = []
                 return

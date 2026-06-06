@@ -2529,11 +2529,42 @@ class WorldTracker {
         // Controllers override hand simulated controllers
         let controllerLeftMotion = controllerToAlvrDeviceMotion(true, controllerPredictionTimestamp)
         let controllerRightMotion = controllerToAlvrDeviceMotion(false, controllerPredictionTimestamp)
-        if controllerLeftMotion != nil {
+        
+        var useControllerLeft = (controllerLeftMotion != nil)
+        if useControllerLeft && ALVRClientApp.gStore.settings.enableDistanceBasedHandTracking {
+            if #available(visionOS 26.0, *) {
+                if let hand = handPoses.leftHand, hand.isTracked,
+                   let controllerAnchor = self.leftControllerAnchor as? AccessoryAnchor {
+                    let handPos = hand.originFromAnchorTransform.columns.3.asFloat3()
+                    let controllerPos = controllerAnchor.originFromAnchorTransform.columns.3.asFloat3()
+                    let dist = simd_distance(handPos, controllerPos)
+                    if dist > 0.15 {
+                        useControllerLeft = false
+                    }
+                }
+            }
+        }
+        
+        var useControllerRight = (controllerRightMotion != nil)
+        if useControllerRight && ALVRClientApp.gStore.settings.enableDistanceBasedHandTracking {
+            if #available(visionOS 26.0, *) {
+                if let hand = handPoses.rightHand, hand.isTracked,
+                   let controllerAnchor = self.rightControllerAnchor as? AccessoryAnchor {
+                    let handPos = hand.originFromAnchorTransform.columns.3.asFloat3()
+                    let controllerPos = controllerAnchor.originFromAnchorTransform.columns.3.asFloat3()
+                    let dist = simd_distance(handPos, controllerPos)
+                    if dist > 0.15 {
+                        useControllerRight = false
+                    }
+                }
+            }
+        }
+        
+        if useControllerLeft {
             trackingMotions.removeAll(where: {$0.device_id == WorldTracker.deviceIdLeftHand })
             trackingMotions.append(controllerLeftMotion!)
         }
-        if controllerRightMotion != nil {
+        if useControllerRight {
             trackingMotions.removeAll(where: {$0.device_id == WorldTracker.deviceIdRightHand })
             trackingMotions.append(controllerRightMotion!)
         }

@@ -134,6 +134,17 @@ struct Entry: View {
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                     
+                    if #unavailable(visionOS 2.0) {
+                        Text("*Higher refresh rates cause skipping when displaying 30P content, or judder while passthrough is active")
+                            .font(.system(size: 10))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    else {
+                        Text("*Higher refresh rates cause skipping when displaying 30P content")
+                            .font(.system(size: 10))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    
                     HStack {
                         Text("Color Gamut")
                         Picker("Color Gamut", selection: $gStore.settings.colorGamutMode) {
@@ -146,16 +157,6 @@ struct Entry: View {
                             saveAction()
                         }
                         .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    if #unavailable(visionOS 2.0) {
-                        Text("*Higher refresh rates cause skipping when displaying 30P content, or judder while passthrough is active")
-                            .font(.system(size: 10))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    else {
-                        Text("*Higher refresh rates cause skipping when displaying 30P content")
-                            .font(.system(size: 10))
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .frame(minWidth: 450)

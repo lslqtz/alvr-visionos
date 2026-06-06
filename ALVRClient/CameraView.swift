@@ -89,6 +89,9 @@ struct CameraView: View {
                     Text("Camera unavailable")
                         .foregroundStyle(.secondary)
                 }
+            } else {
+                Color.clear
+                    .frame(width: 1, height: 1)
             }
         }
         .task {
@@ -300,10 +303,21 @@ final class CameraModel: NSObject, ObservableObject {
             } else {
                 AVCaptureDevice.systemPreferredCamera
             }
-            guard let camera = device, let input = try? AVCaptureDeviceInput(device: camera) else { return }
-
-            if self.session.canAddInput(input) {
-                self.session.addInput(input)
+            if device == nil {
+                print("CameraView configureSession: Camera device is nil!")
+            }
+            guard let camera = device else { return }
+            do {
+                let input = try AVCaptureDeviceInput(device: camera)
+                if self.session.canAddInput(input) {
+                    self.session.addInput(input)
+                    print("CameraView configureSession: Added camera input to session successfully.")
+                } else {
+                    print("CameraView configureSession: Cannot add camera input to session!")
+                }
+            } catch {
+                print("CameraView configureSession: Failed to create AVCaptureDeviceInput: \(error)")
+                return
             }
 
             // Configure video data output
@@ -329,6 +343,7 @@ final class CameraModel: NSObject, ObservableObject {
         sessionQueue.async {
             guard !self.session.isRunning else { return }
             self.session.startRunning()
+            print("CameraView session started running.")
         }
     }
 
@@ -336,6 +351,7 @@ final class CameraModel: NSObject, ObservableObject {
         sessionQueue.async {
             guard self.session.isRunning else { return }
             self.session.stopRunning()
+            print("CameraView session stopped running.")
         }
     }
 

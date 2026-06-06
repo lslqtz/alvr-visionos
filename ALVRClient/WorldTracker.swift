@@ -3026,20 +3026,23 @@ class WorldTracker {
 #endif
 
         // Send face tracking
-        if self.fbFaceTrackingValid {
+        if let fbFaceExpressions = fbFaceExpressions {
             for i in 0..<70 {
-                fbFaceExpressions?[i] = self.fbFaceTracking[i]
+                fbFaceExpressions[i] = self.fbFaceTracking[i]
             }
         }
 
+        let hasFaceExpressions = fbFaceExpressions != nil
         EventHandler.shared.outgoingWorker.enqueue {
-            var combinedGazePtr: UnsafeMutablePointer<AlvrQuat>? = nil
-            if let eyeGazeLeft = eyeGazeLeftPtr {
-                combinedGazePtr = UnsafeMutablePointer<AlvrQuat>.allocate(capacity: 1)
-                combinedGazePtr?[0] = eyeGazeLeft[0].orientation
-            }
-
-            alvr_send_tracking(reportedTargetTimestampNS, trackingMotions, UInt64(trackingMotions.count), [UnsafePointer(skeletonLeftPtr), UnsafePointer(skeletonRightPtr)], combinedGazePtr)
+            let eyeGazePtrs: [UnsafePointer<AlvrPose>?] = [UnsafePointer(eyeGazeLeftPtr), UnsafePointer(eyeGazeRightPtr)]
+            alvr_send_tracking_and_face_data(
+                reportedTargetTimestampNS,
+                trackingMotions,
+                UInt64(trackingMotions.count),
+                [UnsafePointer(skeletonLeftPtr), UnsafePointer(skeletonRightPtr)],
+                eyeGazePtrs,
+                hasFaceExpressions ? UnsafePointer(fbFaceExpressions) : nil
+            )
 
             if self.needsRecenterTrigger {
                 // TODO raycast to the nearest wall/TV
@@ -3053,7 +3056,6 @@ class WorldTracker {
             skeletonLeftPtr?.deallocate()
             skeletonRightPtr?.deallocate()
             fbFaceExpressions?.deallocate()
-            combinedGazePtr?.deallocate()
         }
         
         return appleOriginFromAnchor
@@ -3103,7 +3105,7 @@ class WorldTracker {
         trackingMotions.append(headMotion)
         
         alvr_send_view_params(UnsafePointer(viewFovsPtr))
-        alvr_send_tracking(targetTimestampNS, trackingMotions, UInt64(trackingMotions.count), nil, nil)
+        alvr_send_tracking_and_face_data(targetTimestampNS, trackingMotions, UInt64(trackingMotions.count), nil, nil, nil)
         
         print("Sending fake tracking...")
     }

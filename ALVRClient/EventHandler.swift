@@ -190,7 +190,21 @@ class EventHandler: ObservableObject {
                 refreshRates = [120, 100, 96, 90]
             }
 
-            let capabilities = AlvrClientCapabilities(default_view_width: UInt32(renderWidth*2), default_view_height: UInt32(renderHeight*2), refresh_rates: refreshRates, refresh_rates_count: UInt64(refreshRates.count), foveated_encoding: true, encoder_high_profile: true, encoder_10_bits: true, encoder_av1: VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1), prefer_10bit: true, prefer_full_range: true, preferred_encoding_gamma: 1.5, prefer_hdr: false)
+            let capabilities = AlvrClientCapabilities(
+                default_view_width: UInt32(renderWidth*2),
+                default_view_height: UInt32(renderHeight*2),
+                max_view_width: UInt32(renderWidth*2),
+                max_view_height: UInt32(renderHeight*2),
+                refresh_rates: refreshRates,
+                refresh_rates_count: UInt64(refreshRates.count),
+                foveated_encoding: true,
+                encoder_high_profile: true,
+                encoder_10_bits: true,
+                encoder_av1: VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1),
+                prefer_10bit: true,
+                preferred_encoding_gamma: 1.5,
+                prefer_hdr: false
+            )
             alvr_initialize(/*capabilities=*/capabilities)
             alvr_initialize_logging()
             alvr_set_decoder_input_callback(nil, { data in return EventHandler.shared.handleNals(frameData: data) })
@@ -489,7 +503,7 @@ class EventHandler: ObservableObject {
         
         let startedDecodeTime = CACurrentMediaTime()
         
-        if currentCodec == ALVR_CODEC_AV1.rawValue && !av1InstantiatedForReal {
+        if currentCodec == ALVR_CODEC_TYPE_AV1.rawValue && !av1InstantiatedForReal {
             print("Creating AV1 codec for real now.")
             let (attemptVtDecompressionSession, attemptVideoFormat) = VideoHandler.createVideoDecoder(initialNals: nal, codec: currentCodec)
             if attemptVtDecompressionSession != nil && attemptVideoFormat != nil {

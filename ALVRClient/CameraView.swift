@@ -298,10 +298,13 @@ final class CameraModel: NSObject, ObservableObject {
 
             // Front wide-angle camera
             
-            let device = if #available(visionOS 2.1, *) {
-                AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
-            } else {
-                AVCaptureDevice.systemPreferredCamera
+            var device: AVCaptureDevice? = nil
+            if #available(visionOS 2.1, *) {
+                device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+            }
+            if device == nil {
+                print("CameraView configureSession: Camera device not found via default API, fallback to systemPreferredCamera...")
+                device = AVCaptureDevice.systemPreferredCamera
             }
             if device == nil {
                 print("CameraView configureSession: Camera device is nil!")

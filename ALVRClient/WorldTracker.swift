@@ -568,8 +568,8 @@ class WorldTracker {
                 if let alvrSettings = Settings.getAlvrSettings() {
                     let emulationMode = alvrSettings.headset.controllers?.emulation_mode ?? ""
                     if emulationMode == "PSVR2Sense" && detectedPsvr {
-                            alvr_send_active_interaction_profile(WorldTracker.deviceIdLeftHand, WorldTracker.psvrInteractionProfile)
-                            alvr_send_active_interaction_profile(WorldTracker.deviceIdRightHand, WorldTracker.psvrInteractionProfile)
+                            alvr_send_active_interaction_profile(WorldTracker.deviceIdLeftHand, WorldTracker.psvrInteractionProfile, nil, 0)
+                            alvr_send_active_interaction_profile(WorldTracker.deviceIdRightHand, WorldTracker.psvrInteractionProfile, nil, 0)
                     }
                 }
                 for stylus in GCStylus.styli {
@@ -2636,11 +2636,42 @@ class WorldTracker {
         // Controllers override hand simulated controllers
         let controllerLeftMotion = controllerToAlvrDeviceMotion(true, controllerPredictionTimestamp)
         let controllerRightMotion = controllerToAlvrDeviceMotion(false, controllerPredictionTimestamp)
-        if controllerLeftMotion != nil {
+        
+        var useControllerLeft = (controllerLeftMotion != nil)
+        if useControllerLeft && ALVRClientApp.gStore.settings.enableDistanceBasedHandTracking {
+            if #available(visionOS 26.0, *) {
+                if let hand = handPoses.leftHand, hand.isTracked,
+                   let controllerAnchor = self.leftControllerAnchor as? AccessoryAnchor {
+                    let handPos = hand.originFromAnchorTransform.columns.3.asFloat3()
+                    let controllerPos = controllerAnchor.originFromAnchorTransform.columns.3.asFloat3()
+                    let dist = simd_distance(handPos, controllerPos)
+                    if dist > 0.15 {
+                        useControllerLeft = false
+                    }
+                }
+            }
+        }
+        
+        var useControllerRight = (controllerRightMotion != nil)
+        if useControllerRight && ALVRClientApp.gStore.settings.enableDistanceBasedHandTracking {
+            if #available(visionOS 26.0, *) {
+                if let hand = handPoses.rightHand, hand.isTracked,
+                   let controllerAnchor = self.rightControllerAnchor as? AccessoryAnchor {
+                    let handPos = hand.originFromAnchorTransform.columns.3.asFloat3()
+                    let controllerPos = controllerAnchor.originFromAnchorTransform.columns.3.asFloat3()
+                    let dist = simd_distance(handPos, controllerPos)
+                    if dist > 0.15 {
+                        useControllerRight = false
+                    }
+                }
+            }
+        }
+        
+        if useControllerLeft {
             trackingMotions.removeAll(where: {$0.device_id == WorldTracker.deviceIdLeftHand })
             trackingMotions.append(controllerLeftMotion!)
         }
-        if controllerRightMotion != nil {
+        if useControllerRight {
             trackingMotions.removeAll(where: {$0.device_id == WorldTracker.deviceIdRightHand })
             trackingMotions.append(controllerRightMotion!)
         }
@@ -3002,11 +3033,13 @@ class WorldTracker {
         }
 
         EventHandler.shared.outgoingWorker.enqueue {
-            // Old API, currently in master/v20
-            //alvr_send_tracking(reportedTargetTimestampNS, trackingMotions, UInt64(trackingMotions.count), [UnsafePointer(skeletonLeftPtr), UnsafePointer(skeletonRightPtr)], [UnsafePointer(eyeGazeLeftPtr), UnsafePointer(eyeGazeRightPtr)])
-            
-            // New API, not upstreamed
-            alvr_send_tracking_and_face_data(reportedTargetTimestampNS, trackingMotions, UInt64(trackingMotions.count), [UnsafePointer(skeletonLeftPtr), UnsafePointer(skeletonRightPtr)], [UnsafePointer(eyeGazeLeftPtr), UnsafePointer(eyeGazeRightPtr)], UnsafePointer(fbFaceExpressions))
+            var combinedGazePtr: UnsafeMutablePointer<AlvrQuat>? = nil
+            if let eyeGazeLeft = eyeGazeLeftPtr {
+                combinedGazePtr = UnsafeMutablePointer<AlvrQuat>.allocate(capacity: 1)
+                combinedGazePtr?[0] = eyeGazeLeft[0].orientation
+            }
+
+            alvr_send_tracking(reportedTargetTimestampNS, trackingMotions, UInt64(trackingMotions.count), [UnsafePointer(skeletonLeftPtr), UnsafePointer(skeletonRightPtr)], combinedGazePtr)
 
             if self.needsRecenterTrigger {
                 // TODO raycast to the nearest wall/TV
@@ -3020,6 +3053,7 @@ class WorldTracker {
             skeletonLeftPtr?.deallocate()
             skeletonRightPtr?.deallocate()
             fbFaceExpressions?.deallocate()
+            combinedGazePtr?.deallocate()
         }
         
         return appleOriginFromAnchor
@@ -3037,6 +3071,7 @@ class WorldTracker {
         let rightPoseHeadLocal = AlvrPose(rightOrientationHeadLocal, rightPositionHeadLocal)
         
         let viewFovsPtr = UnsafeMutablePointer<AlvrViewParams>.allocate(capacity: 2)
+        defer { viewFovsPtr.deallocate() }
         viewFovsPtr[0] = AlvrViewParams(pose: leftPoseHeadLocal, fov: viewFovs[0])
         viewFovsPtr[1] = AlvrViewParams(pose: rightPoseHeadLocal, fov: viewFovs[1])
         

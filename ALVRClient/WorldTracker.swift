@@ -304,6 +304,7 @@ class WorldTracker {
     // Face tracking
     var fbFaceTracking = Array(repeating: Float(0.0), count: 70)
     var fbFaceTrackingValid = false
+    var sendFrameCount = 0
     
     static let maxPrediction = 30 * NSEC_PER_MSEC
     static let maxPredictionRK = 70 * NSEC_PER_MSEC
@@ -3065,6 +3066,17 @@ class WorldTracker {
 
         let hasFaceExpressions = fbFaceExpressions != nil
         EventHandler.shared.outgoingWorker.enqueue {
+            let leftPose = eyeGazeLeftPtr?[0]
+            let rightPose = eyeGazeRightPtr?[0]
+            self.sendFrameCount += 1
+            if self.sendFrameCount % 90 == 0 {
+                print("WorldTracker tracking payload: Frame #\(self.sendFrameCount)")
+                print(" - fbFaceTrackingValid: \(self.fbFaceTrackingValid), eyeIsMipmapMethod: \(self.eyeIsMipmapMethod)")
+                print(" - Left Eye: \(leftPose != nil ? "pos=\(leftPose!.position), rot=\(leftPose!.orientation)" : "nil")")
+                print(" - Right Eye: \(rightPose != nil ? "pos=\(rightPose!.position), rot=\(rightPose!.orientation)" : "nil")")
+                print(" - hasFaceExpressions: \(hasFaceExpressions)")
+            }
+
             let eyeGazePtrs: [UnsafePointer<AlvrPose>?] = [UnsafePointer(eyeGazeLeftPtr), UnsafePointer(eyeGazeRightPtr)]
             alvr_send_tracking_and_face_data(
                 reportedTargetTimestampNS,

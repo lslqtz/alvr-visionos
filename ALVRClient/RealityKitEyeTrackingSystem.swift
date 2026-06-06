@@ -81,9 +81,16 @@ class NotificationManager: ObservableObject {
     var xReg = NotificationShiftRegisterVar("EyeTrackingInfoX")
     var yReg = NotificationShiftRegisterVar("EyeTrackingInfoY")
     
+    private var lastPrintTime = 0.0
     func updateSingleton() {
         WorldTracker.shared.eyeX = (self.xReg.asFloat - 0.5) * 1.0
         WorldTracker.shared.eyeY = ((1.0 - self.yReg.asFloat) - 0.5) * 1.0
+        
+        let now = CACurrentMediaTime()
+        if now - lastPrintTime >= 1.0 {
+            print("NotificationManager: Received eye coordinates X: \(self.xReg.asFloat), Y: \(self.yReg.asFloat) -> eyeX: \(WorldTracker.shared.eyeX), eyeY: \(WorldTracker.shared.eyeY)")
+            lastPrintTime = now
+        }
     }
 
     init() {

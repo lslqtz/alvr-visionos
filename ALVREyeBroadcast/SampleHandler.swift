@@ -82,6 +82,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         if CACurrentMediaTime() - self.lastSentHeartbeat >= 1.0 {
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName("EyeTrackingInfoServerHeartbeat" as CFString), nil, nil, true)
             self.lastSentHeartbeat = CACurrentMediaTime()
+            NSLog("ALVREyeBroadcast: Sent Heartbeat to client")
         }
         
         // If the client hasn't sent its heartbeat though, stop streaming.
@@ -247,6 +248,10 @@ class SampleHandler: RPBroadcastSampleHandler {
         let eyeX = eyeXCentered + 0.5
         let eyeY = eyeYCentered + 0.5
         
+        if Int(CACurrentMediaTime()) % 3 == 0 {
+            NSLog("ALVREyeBroadcast Mipmap: computed eyeX: \(eyeX), eyeY: \(eyeY)")
+        }
+        
         excavateValue(to: "X", val: eyeX)
         excavateValue(to: "Y", val: eyeY)
     }
@@ -280,8 +285,9 @@ class SampleHandler: RPBroadcastSampleHandler {
         let xPred = rClamped
         let yPred = gClamped
         
-        //let message = String(format: "EYES: %f %f", Float(xPred), Float(yPred))
-        //NSLog(message)
+        if Int(CACurrentMediaTime()) % 3 == 0 {
+            NSLog("ALVREyeBroadcast Hover: computed eyeX: \(xPred), eyeY: \(yPred)")
+        }
         
         excavateValue(to: "X", val: Float(xPred))
         excavateValue(to: "Y", val: Float(yPred))

@@ -3077,7 +3077,12 @@ class WorldTracker {
                 print(" - hasFaceExpressions: \(hasFaceExpressions)")
             }
 
-            let eyeGazePtrs: [UnsafePointer<AlvrPose>?] = [UnsafePointer(eyeGazeLeftPtr), UnsafePointer(eyeGazeRightPtr)]
+            // Temporary test: force combined gaze (right eye = nil) to check if CenterPitchYaw OSC fixes tracking.
+            let forceCombinedGaze = true
+            let eyeGazePtrs: [UnsafePointer<AlvrPose>?] = [
+                UnsafePointer(eyeGazeLeftPtr),
+                forceCombinedGaze ? nil : UnsafePointer(eyeGazeRightPtr)
+            ]
             alvr_send_tracking_and_face_data(
                 reportedTargetTimestampNS,
                 trackingMotions,

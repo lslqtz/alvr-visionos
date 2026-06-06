@@ -133,6 +133,20 @@ struct Entry: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .trailing)
                     }
+                    
+                    HStack {
+                        Text("Color Gamut")
+                        Picker("Color Gamut", selection: $gStore.settings.colorGamutMode) {
+                            ForEach(ColorGamutMode.allCases, id: \.self) { gamut in
+                                Text(gamut.rawValue).tag(gamut)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: gStore.settings.colorGamutMode) {
+                            saveAction()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                     if #unavailable(visionOS 2.0) {
                         Text("*Higher refresh rates cause skipping when displaying 30P content, or judder while passthrough is active")
                             .font(.system(size: 10))

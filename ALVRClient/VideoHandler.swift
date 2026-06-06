@@ -156,23 +156,22 @@ struct VideoHandler {
         print(videoFormat!)
         
         // We need our pixels unpacked for 10-bit so that the Metal textures actually work
-        //var pixelFormat:OSType? = nil
-        //let bpc = getBpcForVideoFormat(videoFormat!)
-        //let isFullRange = getIsFullRangeForVideoFormat(videoFormat!)
-        
-        // TODO: figure out how to check for 422/444, CVImageBufferChromaLocationBottomField?
-        // On visionOS 2, setting pixelFormat *at all* causes a copy to an uncompressed MTLTexture buffer, so we are avoiding it for now.
-        //if bpc == 10 {
-        //    //pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-        //    //pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10PackedBiPlanarFullRange : kCVPixelFormatType_420YpCbCr10PackedBiPlanarVideoRange // default
-        //}
+        var pixelFormat:OSType? = nil
+        if ALVRClientApp.gStore.settings.colorGamutMode != .auto {
+            let bpc = getBpcForVideoFormat(videoFormat!)
+            let isFullRange = getIsFullRangeForVideoFormat(videoFormat!)
+            if bpc == 10 {
+                pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            } else {
+                pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            }
+        }
         
         let videoDecoderSpecification:[NSString: AnyObject] = [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder:kCFBooleanTrue]
-        let destinationImageBufferAttributes:[NSString: AnyObject] = [kCVPixelBufferMetalCompatibilityKey: true as NSNumber, kCVPixelBufferPoolMinimumBufferCountKey: 3 as NSNumber]
-        // TODO come back to this maybe idk
-        //if pixelFormat != nil {
-        //    destinationImageBufferAttributes[kCVPixelBufferPixelFormatTypeKey] = pixelFormat! as NSNumber
-        //}
+        var destinationImageBufferAttributes:[NSString: AnyObject] = [kCVPixelBufferMetalCompatibilityKey: true as NSNumber, kCVPixelBufferPoolMinimumBufferCountKey: 3 as NSNumber]
+        if let pixelFormat = pixelFormat {
+            destinationImageBufferAttributes[kCVPixelBufferPixelFormatTypeKey] = pixelFormat as NSNumber
+        }
 
         var decompressionSession:VTDecompressionSession? = nil
         err = VTDecompressionSessionCreate(allocator: nil, formatDescription: videoFormat!, decoderSpecification: videoDecoderSpecification as CFDictionary, imageBufferAttributes: destinationImageBufferAttributes as CFDictionary, outputCallback: nil, decompressionSessionOut: &decompressionSession)
@@ -382,9 +381,21 @@ struct VideoHandler {
                     hevc_exts[kCMFormatDescriptionExtension_FieldCount] = 1 as NSNumber
                     hevc_exts[kCMFormatDescriptionExtension_ChromaLocationBottomField] = kCVImageBufferChromaLocation_Left
                     hevc_exts[kCMFormatDescriptionExtension_ChromaLocationTopField] = kCVImageBufferChromaLocation_Left
-                    hevc_exts[kCMFormatDescriptionExtension_ColorPrimaries] = (bpc == 10) ? kCVImageBufferColorPrimaries_ITU_R_2020 : kCVImageBufferColorPrimaries_ITU_R_709_2
+                    
+                    let gamutMode = ALVRClientApp.gStore.settings.colorGamutMode
+                    let useBT2020: Bool
+                    switch gamutMode {
+                    case .auto:
+                        useBT2020 = (bpc == 10)
+                    case .bt709Full, .bt709Limited:
+                        useBT2020 = false
+                    case .bt2020Full, .bt2020Limited:
+                        useBT2020 = true
+                    }
+                    
+                    hevc_exts[kCMFormatDescriptionExtension_ColorPrimaries] = useBT2020 ? kCVImageBufferColorPrimaries_ITU_R_2020 : kCVImageBufferColorPrimaries_ITU_R_709_2
                     hevc_exts[kCMFormatDescriptionExtension_TransferFunction] = kCVImageBufferTransferFunction_sRGB
-                    hevc_exts[kCMFormatDescriptionExtension_YCbCrMatrix] = (bpc == 10) ? kCVImageBufferColorPrimaries_ITU_R_2020 : kCVImageBufferColorPrimaries_ITU_R_709_2
+                    hevc_exts[kCMFormatDescriptionExtension_YCbCrMatrix] = useBT2020 ? kCVImageBufferYCbCrMatrix_ITU_R_2020 : kCVImageBufferYCbCrMatrix_ITU_R_709_2
                     //hevc_exts[kCMFormatDescriptionExtension_Depth] = 24 as NSNumber
                     //hevc_exts[kCMFormatDescriptionExtension_FormatName] = "av01" as NSString
                     hevc_exts[kCMFormatDescriptionExtension_FullRangeVideo] = fullrange as NSNumber
@@ -751,6 +762,7 @@ struct VideoHandler {
     // The Metal texture formats for each of the planes of a given CVPixelFormatType
     static func getTextureTypesForFormat(_ format: OSType) -> [MTLPixelFormat]
     {
+        let isSecret = isFormatSecret(format)
         switch(format) {
             // 8-bit biplanar
             case kCVPixelFormatType_Lossy_420YpCbCr8BiPlanarVideoRange,
@@ -765,7 +777,7 @@ struct VideoHandler {
                  kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                  kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange,
                  kCVPixelFormatType_444YpCbCr8BiPlanarFullRange:
-                return forceFastSecretTextureFormats ? [MTLPixelFormat.init(rawValue: MTLPixelFormatYCBCR8_420_2P_sRGB)!, MTLPixelFormat.invalid] : [MTLPixelFormat.r8Unorm, MTLPixelFormat.rg8Unorm]
+                return isSecret ? [MTLPixelFormat.init(rawValue: MTLPixelFormatYCBCR8_420_2P_sRGB)!, MTLPixelFormat.invalid] : [MTLPixelFormat.r8Unorm, MTLPixelFormat.rg8Unorm]
 
             // 10-bit biplanar
             case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
@@ -774,7 +786,7 @@ struct VideoHandler {
                  kCVPixelFormatType_422YpCbCr10BiPlanarFullRange,
                  kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange,
                  kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
-                return forceFastSecretTextureFormats ? [MTLPixelFormat.init(rawValue: MTLPixelFormatYCBCR10_420_2P_sRGB)!, MTLPixelFormat.invalid] : [MTLPixelFormat.r16Unorm, MTLPixelFormat.rg16Unorm]
+                return isSecret ? [MTLPixelFormat.init(rawValue: MTLPixelFormatYCBCR10_420_2P_sRGB)!, MTLPixelFormat.invalid] : [MTLPixelFormat.r16Unorm, MTLPixelFormat.rg16Unorm]
 
             //
             // If it's good enough for WebKit, it's good enough for me.
@@ -815,6 +827,9 @@ struct VideoHandler {
     
     static func isFormatSecret(_ format: OSType) -> Bool
     {
+        if ALVRClientApp.gStore.settings.colorGamutMode != .auto {
+            return false
+        }
         switch(format) {
             // Packed formats, requires secret MTLTexture pixel formats
             case kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange,
@@ -863,7 +878,27 @@ struct VideoHandler {
     
     static func getYUVTransformForVideoFormat(_ videoFormat: CMFormatDescription) -> simd_float4x4 {
         let fmtYCbCrMatrixRaw = videoFormat.extensions["CVImageBufferYCbCrMatrix" as CFString]
-        let fmtYCbCrMatrix = (fmtYCbCrMatrixRaw != nil ? fmtYCbCrMatrixRaw as! CFString : "unknown" as CFString)
+        var fmtYCbCrMatrix = (fmtYCbCrMatrixRaw != nil ? fmtYCbCrMatrixRaw as! CFString : "unknown" as CFString)
+
+        let gamutMode = ALVRClientApp.gStore.settings.colorGamutMode
+        var isFullRange = getIsFullRangeForVideoFormat(videoFormat)
+        
+        switch gamutMode {
+        case .auto:
+            break
+        case .bt709Full:
+            fmtYCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
+            isFullRange = true
+        case .bt709Limited:
+            fmtYCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
+            isFullRange = false
+        case .bt2020Full:
+            fmtYCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+            isFullRange = true
+        case .bt2020Limited:
+            fmtYCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+            isFullRange = false
+        }
 
         // Bless this page for ending my stint of plugging in random values
         // from other projects:
@@ -924,20 +959,20 @@ struct VideoHandler {
         );
 
         // BT.2020 Limited range
-        /*let bt2020ToRGBLimited = simd_float4x4([
+        let bt2020ToRGBLimited = simd_float4x4([
             simd_float4(+1.1632, +1.1632, +1.1632, +0.0000), // Y
             simd_float4(+0.0002, -0.1870, +2.1421, +0.0000), // Cb
             simd_float4(+1.6794, -0.6497, +0.0008, +0.0000), // Cr
             simd_float4(-0.91607960784, +0.34703254902, -1.14866392157, +1.0000)]  // offsets
-        );*/
+        );
 
         // BT.709 Limited range
-        /*let bt709ToRGBLimited = simd_float4x4([
+        let bt709ToRGBLimited = simd_float4x4([
             simd_float4(+1.1644, +1.1644, +1.1644, +0.0000), // Y
             simd_float4(+0.0001, -0.2133, +2.1125, +0.0000), // Cb
             simd_float4(+1.7969, -0.5342, -0.0002, +0.0000), // Cr
             simd_float4(-0.97506392156, 0.30212823529, -1.1333145098, +1.0000)]  // offsets
-        );*/
+        );
 
         let bpc = getBpcForVideoFormat(videoFormat)
         if bpc == 10 {
@@ -945,9 +980,9 @@ struct VideoHandler {
                 case kCVImageBufferYCbCrMatrix_ITU_R_601_4:
                     return bt601ToRGBFull10bit;
                 case kCVImageBufferYCbCrMatrix_ITU_R_709_2:
-                    return bt709ToRGBFull10bit;
+                    return isFullRange ? bt709ToRGBFull10bit : bt709ToRGBLimited;
                 case kCVImageBufferYCbCrMatrix_ITU_R_2020:
-                    return bt2020ToRGBFull10bit;
+                    return isFullRange ? bt2020ToRGBFull10bit : bt2020ToRGBLimited;
                 default:
                     return ycbcrJPEGToRGB;
             }
@@ -957,9 +992,9 @@ struct VideoHandler {
                 case kCVImageBufferYCbCrMatrix_ITU_R_601_4:
                     return bt601ToRGBFull8bit;
                 case kCVImageBufferYCbCrMatrix_ITU_R_709_2:
-                    return bt709ToRGBFull8bit;
+                    return isFullRange ? bt709ToRGBFull8bit : bt709ToRGBLimited;
                 case kCVImageBufferYCbCrMatrix_ITU_R_2020:
-                    return bt2020ToRGBFull8bit;
+                    return isFullRange ? bt2020ToRGBFull8bit : bt2020ToRGBLimited;
                 default:
                     return ycbcrJPEGToRGB;
             }

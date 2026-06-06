@@ -567,10 +567,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ALVRClient/ALVRClient.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"ALVRClient/Preview Content\"";
-				DEVELOPMENT_TEAM = A2R992S5N3;
+				DEVELOPMENT_TEAM = "$(ALVR_DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				EXCLUDED_ARCHS = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -579,8 +580,12 @@
 				INFOPLIST_KEY_GCSupportsControllerUserInteraction = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSAccessoryTrackingUsageDescription = "ALVR would like to send spatial accessory positions to SteamVR.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ALVR would like to track and send face tracking data to SteamVR, using your Spatial Persona camera.";
+				INFOPLIST_KEY_NSHandsTrackingUsageDescription = "ALVR would like to send hand positions and skeletons to SteamVR.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "For connecting to ALVR server on local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used for in game voice chat";
+				INFOPLIST_KEY_NSWorldSensingUsageDescription = "ALVR would like to scan your surroundings for obstacles and playspace boundaries.";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -591,8 +596,9 @@
 					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 20.14.5;
-				PRODUCT_BUNDLE_IDENTIFIER = alvr.client;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALVR_CLIENT_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -610,10 +616,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ALVRClient/ALVRClient.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"ALVRClient/Preview Content\"";
-				DEVELOPMENT_TEAM = A2R992S5N3;
+				DEVELOPMENT_TEAM = "$(ALVR_DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				EXCLUDED_ARCHS = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -622,8 +629,12 @@
 				INFOPLIST_KEY_GCSupportsControllerUserInteraction = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSAccessoryTrackingUsageDescription = "ALVR would like to send spatial accessory positions to SteamVR.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ALVR would like to track and send face tracking data to SteamVR, using your Spatial Persona camera.";
+				INFOPLIST_KEY_NSHandsTrackingUsageDescription = "ALVR would like to send hand positions and skeletons to SteamVR.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "For connecting to ALVR server on local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used for in game voice chat";
+				INFOPLIST_KEY_NSWorldSensingUsageDescription = "ALVR would like to scan your surroundings for obstacles and playspace boundaries.";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -634,8 +645,9 @@
 					"$(PROJECT_DIR)",
 				);
 				MARKETING_VERSION = 20.14.5;
-				PRODUCT_BUNDLE_IDENTIFIER = alvr.client;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALVR_CLIENT_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -648,11 +660,12 @@
 		};
 		E71DEFAE2C192617008A2074 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D68FA8042B73D5DD0052B7FF /* ALVRClient.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ALVREyeBroadcast/ALVREyeBroadcast.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A2R992S5N3;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = "$(ALVR_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ALVREyeBroadcast/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Send Eye Tracking To ALVR";
@@ -662,8 +675,8 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = alvr.client.ALVREyeBroadcast;
+				MARKETING_VERSION = 20.14.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALVR_CLIENT_BUNDLE_ID).ALVREyeBroadcast";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";
@@ -676,11 +689,12 @@
 		};
 		E71DEFAF2C192617008A2074 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D68FA8042B73D5DD0052B7FF /* ALVRClient.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ALVREyeBroadcast/ALVREyeBroadcast.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A2R992S5N3;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = "$(ALVR_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ALVREyeBroadcast/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Send Eye Tracking To ALVR";
@@ -690,8 +704,8 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = alvr.client.ALVREyeBroadcast;
+				MARKETING_VERSION = 20.14.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ALVR_CLIENT_BUNDLE_ID).ALVREyeBroadcast";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "xros xrsimulator";

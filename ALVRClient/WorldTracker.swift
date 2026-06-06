@@ -242,6 +242,7 @@ class WorldTracker {
     var planeAnchors: [UUID: PlaneAnchor] = [:]
     var worldAnchors: [UUID: WorldAnchor] = [:]
     var worldAnchorsToRemove: [WorldAnchor] = []
+    var worldAnchorsLock = NSObject()
     var worldTrackingAddedOriginAnchor = false
     var worldTrackingSteamVRTransform: simd_float4x4 = matrix_identity_float4x4
     var worldOriginAnchor: WorldAnchor? = nil
@@ -462,6 +463,7 @@ class WorldTracker {
     var trackedAccessories: [GCController] = []
     var trackedStylii: [Any] = []
     var arRunning = false
+    var arUpdateTasks: [Task<Void, Never>] = []
     var needsRecenterTrigger = false
     var leftEyeFilter = OneEuroFilter3(minCutoff: 1.0, beta: 0.007, derivCutoff: 1.0)
     var rightEyeFilter = OneEuroFilter3(minCutoff: 1.0, beta: 0.007, derivCutoff: 1.0)
@@ -494,6 +496,14 @@ class WorldTracker {
     
     func initializeAr() async  {
         print("initializeAr")
+        
+        // Cancel and wait for any previously running AR update tasks to finish,
+        // preventing concurrent processWorldTrackingUpdates tasks from racing on shared state.
+        for task in arUpdateTasks {
+            task.cancel()
+        }
+        arUpdateTasks.removeAll()
+        
         resetPlayspace()
         
         objc_sync_enter(arkitLock)
@@ -588,25 +598,18 @@ class WorldTracker {
         }
         objc_sync_exit(arkitLock)
         
-        Task {
-            await processReconstructionUpdates()
-        }
-        Task {
-            await processPlaneUpdates()
-        }
-        Task {
-            await processWorldTrackingUpdates()
-        }
-        Task {
-            await processHandTrackingUpdates()
-        }
-        Task {
-            await processAccessoryTrackingUpdates()
-        }
+        // Start independent update tasks. We store them in an array so they can
+        // all be cleanly cancelled during re-initialization.
+        arUpdateTasks.append(Task { await self.processReconstructionUpdates() })
+        arUpdateTasks.append(Task { await self.processPlaneUpdates() })
+        arUpdateTasks.append(Task { await self.processWorldTrackingUpdates() })
+        arUpdateTasks.append(Task { await self.processHandTrackingUpdates() })
+        arUpdateTasks.append(Task { await self.processAccessoryTrackingUpdates() })
     }
     
     func processReconstructionUpdates() async {
         for await _ in sceneReconstruction.anchorUpdates {
+            if Task.isCancelled { break }
             //let meshAnchor = update.anchor
             //print(meshAnchor.id, meshAnchor.originFromAnchorTransform)
         }
@@ -614,6 +617,7 @@ class WorldTracker {
     
     func processPlaneUpdates() async {
         for await update in planeDetection.anchorUpdates {
+            if Task.isCancelled { break }
             //print(update.event, update.anchor.classification, update.anchor.id, update.anchor.description)
             if update.anchor.classification == .window {
                 // Skip planes that are windows.
@@ -643,23 +647,29 @@ class WorldTracker {
     // every time visionOS's centering changes.
     func processWorldTrackingUpdates() async {
         for await update in worldTracking.anchorUpdates {
+            // Check for Task cancellation (e.g., when initializeAr() re-runs)
+            if Task.isCancelled { break }
+            
             let keepSteamVRCenter = await ALVRClientApp.gStore.settings.keepSteamVRCenter
             print(update.event, update.anchor.id, update.anchor.description, update.timestamp)
             
             switch update.event {
             case .added, .updated:
+                objc_sync_enter(worldAnchorsLock)
                 worldAnchors[update.anchor.id] = update.anchor
-                if !self.worldTrackingAddedOriginAnchor && keepSteamVRCenter && (worldOriginAnchor == nil || update.anchor.id != worldOriginAnchor!.id) {
-                    print("Early origin anchor?", anchorDistanceFromOrigin(anchor: update.anchor), "Current Origin,", self.worldOriginAnchor?.id)
+                let currentOriginAnchor = self.worldOriginAnchor
+                
+                if !self.worldTrackingAddedOriginAnchor && keepSteamVRCenter && (currentOriginAnchor == nil || update.anchor.id != currentOriginAnchor!.id) {
+                    print("Early origin anchor?", anchorDistanceFromOrigin(anchor: update.anchor), "Current Origin,", currentOriginAnchor?.id)
                     
                     // If we randomly get an anchor added within 3.5m, consider that our origin
-                    if anchorDistanceFromOrigin(anchor: update.anchor) < 3.5 && update.anchor.isTracked && (worldOriginAnchor == nil || anchorDistanceFromOrigin(anchor: update.anchor) <= anchorDistanceFromOrigin(anchor: worldOriginAnchor!)) {
+                    if anchorDistanceFromOrigin(anchor: update.anchor) < 3.5 && update.anchor.isTracked && (currentOriginAnchor == nil || anchorDistanceFromOrigin(anchor: update.anchor) <= anchorDistanceFromOrigin(anchor: currentOriginAnchor!)) {
                         print("Set new origin!")
                         
                         // This has a (positive) minor side-effect: all redundant anchors within 3.5m will get cleaned up,
                         // though which anchor gets chosen will be arbitrary.
                         // But there should only be one anyway.
-                        if let anchor = self.worldOriginAnchor {
+                        if let anchor = currentOriginAnchor {
                             worldAnchorsToRemove.append(anchor)
                         }
                         
@@ -668,15 +678,15 @@ class WorldTracker {
                     }
                 }
                 else {
-                    if worldOriginAnchor != nil && update.anchor.id != worldOriginAnchor!.id {
-                        if anchorDistanceFromAnchor(anchorA: update.anchor, anchorB: worldOriginAnchor!) <= 3.5 && update.anchor.isTracked {
+                    if let originAnchor = currentOriginAnchor, update.anchor.id != originAnchor.id {
+                        if anchorDistanceFromAnchor(anchorA: update.anchor, anchorB: originAnchor) <= 3.5 && update.anchor.isTracked {
                             print("Removed anchor for being too close:", update.anchor.id)
-                            worldAnchorsToRemove.append( update.anchor)
+                            worldAnchorsToRemove.append(update.anchor)
                         }
                     }
                 }
                 
-                if worldOriginAnchor != nil && update.anchor.id == worldOriginAnchor!.id {
+                if let originAnchor = currentOriginAnchor, update.anchor.id == originAnchor.id {
                     self.worldOriginAnchor = update.anchor
                     
                     // This seems to happen when headset is removed, or on app close.
@@ -684,6 +694,7 @@ class WorldTracker {
                         print("Headset removed?")
                         //EventHandler.shared.handleHeadsetRemoved()
                         //resetPlayspace()
+                        objc_sync_exit(worldAnchorsLock)
                         continue
                     }
 
@@ -718,17 +729,21 @@ class WorldTracker {
                                 }
                             }
                     
-                            self.worldOriginAnchor = WorldAnchor(originFromAnchorTransform: matrix_identity_float4x4)
+                            let newOrigin = WorldAnchor(originFromAnchorTransform: matrix_identity_float4x4)
+                            self.worldOriginAnchor = newOrigin
                             self.worldTrackingAddedOriginAnchor = true
                             self.worldTrackingSteamVRTransform = anchorTransform
 
+                            objc_sync_exit(worldAnchorsLock)
+                            
                             do {
-                                try await worldTracking.addAnchor(self.worldOriginAnchor!)
+                                try await worldTracking.addAnchor(newOrigin)
                             }
                             catch {
                                 // don't care
                             }
                             
+                            objc_sync_enter(worldAnchorsLock)
                             crownPressCount = 0
                             
                             needsRecenterTrigger = true
@@ -741,6 +756,7 @@ class WorldTracker {
                         }
                     }
                 }
+                objc_sync_exit(worldAnchorsLock)
                 
             case .removed:
                 break
@@ -750,6 +766,7 @@ class WorldTracker {
     
     func processHandTrackingUpdates() async {
         for await update in handTracking.anchorUpdates {
+            if Task.isCancelled { break }
             switch update.event {
             case .added, .updated:
                 //print(update.timestamp - lastHandsUpdatedTs)
@@ -763,12 +780,14 @@ class WorldTracker {
     
     func processAccessoryTrackingUpdates() async {
         while self.accessoryTracking == nil {
+            if Task.isCancelled { return }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
 #if XCODE_BETA_26
         if #available(visionOS 26.0, *) {
             if let accessories = self.accessoryTracking as! AccessoryTrackingProvider? {
                 for await update in accessories.anchorUpdates {
+                    if Task.isCancelled { break }
                     switch update.event {
                     case .added, .updated:
                         if update.anchor.accessory.inherentChirality == .left {
@@ -2010,17 +2029,25 @@ class WorldTracker {
             }
         }
         
-        Task {
-            for anchor in worldAnchorsToRemove {
-                do {
-                    try await worldTracking.removeAnchor(anchor)
+        objc_sync_enter(worldAnchorsLock)
+        let localAnchorsToRemove = worldAnchorsToRemove
+        worldAnchorsToRemove.removeAll()
+        objc_sync_exit(worldAnchorsLock)
+        
+        if !localAnchorsToRemove.isEmpty {
+            Task {
+                for anchor in localAnchorsToRemove {
+                    do {
+                        try await worldTracking.removeAnchor(anchor)
+                    }
+                    catch {
+                        // don't care
+                    }
+                    objc_sync_enter(worldAnchorsLock)
+                    worldAnchors.removeValue(forKey: anchor.id)
+                    objc_sync_exit(worldAnchorsLock)
                 }
-                catch {
-                    // don't care
-                }
-                worldAnchors.removeValue(forKey: anchor.id)
             }
-            worldAnchorsToRemove.removeAll()
         }
         
         // Predict as far into the future as Apple will allow us.
@@ -2062,13 +2089,20 @@ class WorldTracker {
         // That aside, if we add an anchor at (0,0,0), we will get reports in processWorldTrackingUpdates()
         // every time the user recenters.
         if (!self.worldTrackingAddedOriginAnchor && sentPoses > 300) || (!self.worldTrackingAddedOriginAnchor && !ALVRClientApp.gStore.settings.keepSteamVRCenter) {
-            if self.worldOriginAnchor == nil && ALVRClientApp.gStore.settings.keepSteamVRCenter {
-                self.worldOriginAnchor = WorldAnchor(originFromAnchorTransform: matrix_identity_float4x4)
+            objc_sync_enter(worldAnchorsLock)
+            let currentOrigin = self.worldOriginAnchor
+            objc_sync_exit(worldAnchorsLock)
+            
+            if currentOrigin == nil && ALVRClientApp.gStore.settings.keepSteamVRCenter {
+                let newOrigin = WorldAnchor(originFromAnchorTransform: matrix_identity_float4x4)
+                objc_sync_enter(worldAnchorsLock)
+                self.worldOriginAnchor = newOrigin
+                objc_sync_exit(worldAnchorsLock)
                 self.worldTrackingSteamVRTransform = matrix_identity_float4x4
                 
                 Task {
                     do {
-                        try await worldTracking.addAnchor(self.worldOriginAnchor!)
+                        try await worldTracking.addAnchor(newOrigin)
                     }
                     catch {
                         // don't care

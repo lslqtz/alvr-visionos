@@ -132,9 +132,15 @@ struct ALVRClientApp: App {
             }
             .task {
                 model.isShowingClient = false
-                EventHandler.shared.initializeAlvr()
+                
+                // Offload synchronous C/Rust FFI initialization to a standard GCD thread
+                // to prevent blocking Swift Concurrency's cooperative thread pool.
+                DispatchQueue.global(qos: .userInteractive).async {
+                    EventHandler.shared.initializeAlvr()
+                    EventHandler.shared.start()
+                }
+                
                 await WorldTracker.shared.initializeAr()
-                EventHandler.shared.start()
             }
             .onChange(of: observedGStore.settings.enableProgressive) {
                 realityKitImmersionStyle = ALVRClientApp.gStore.settings.enableProgressive ? .progressive : .mixed

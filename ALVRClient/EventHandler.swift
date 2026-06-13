@@ -16,6 +16,7 @@ import Metal
 import VideoToolbox
 import Combine
 import AVKit
+import AVFoundation
 import Foundation
 import Network
 import UIKit
@@ -193,6 +194,7 @@ class EventHandler: ObservableObject {
             let capabilities = AlvrClientCapabilities(default_view_width: UInt32(renderWidth*2), default_view_height: UInt32(renderHeight*2), refresh_rates: refreshRates, refresh_rates_count: UInt64(refreshRates.count), foveated_encoding: true, encoder_high_profile: true, encoder_10_bits: true, encoder_av1: VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1), prefer_10bit: true, prefer_full_range: true, preferred_encoding_gamma: 1.5, prefer_hdr: false)
             alvr_initialize(/*capabilities=*/capabilities)
             alvr_initialize_logging()
+            alvr_set_audio_callback(handleAudioPacketCallback)
             alvr_set_decoder_input_callback(nil, { data in return EventHandler.shared.handleNals(frameData: data) })
             alvr_resume()
         }
@@ -240,6 +242,7 @@ class EventHandler: ObservableObject {
         
         //outgoingWorker.stopWorkers()
         
+        SwiftAudioManager.shared.stop()
         updateConnectionState(.disconnected)
     }
     
@@ -284,13 +287,25 @@ class EventHandler: ObservableObject {
         audioIsOff = false
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setActive(true)
             try audioSession.setCategory(.playAndRecord, options: [.mixWithOthers, .allowBluetoothA2DP, .allowAirPlay])
             try audioSession.setMode(.voiceChat)
+            try audioSession.setPreferredSampleRate(48000.0)
             try audioSession.setPreferredOutputNumberOfChannels(2)
             try audioSession.setIntendedSpatialExperience(.bypassed)
+            try audioSession.setActive(true)
+            
+            if #available(iOS 17.0, visionOS 1.0, *) {
+                AVAudioApplication.requestRecordPermission { granted in
+                    print("Microphone permission granted: \(granted)")
+                    if granted {
+                        DispatchQueue.main.async {
+                            SwiftAudioManager.shared.restartEngineWithCurrentSampleRate()
+                        }
+                    }
+                }
+            }
         } catch {
-            print("Failed to set the audio session configuration?")
+            print("Failed to set the audio session configuration? \(error)")
         }
     }
     
@@ -795,6 +810,7 @@ class EventHandler: ObservableObject {
                     lastIpd = -1
                     currentCodec = -1
                     EventHandler.shared.updateConnectionState(.connected)
+                    SwiftAudioManager.shared.start(sampleRate: 48000)
                 }
                 if !renderStarted {
                     WorldTracker.shared.sendFakeTracking(viewFovs: viewFovs, targetTimestamp: CACurrentMediaTime() - 1.0)
@@ -970,4 +986,484 @@ struct QueuedFrame {
     let timestamp: UInt64
     let viewParamsValid: Bool
     let viewParams: [AlvrViewParams]
+}
+
+// ==========================================
+// Lock-Free SPSC Ring Buffer for Real-Time Audio
+// ==========================================
+
+/// Single-Producer Single-Consumer lock-free ring buffer for real-time audio.
+/// - Producer (Rust FFI thread): calls `write()`
+/// - Consumer (Core Audio render thread): calls `read()`
+/// No locks or allocations during read/write — safe for real-time threads.
+final class LockFreeRingBuffer {
+    fileprivate let storage: UnsafeMutablePointer<Float>
+    fileprivate let capacity: Int
+    fileprivate let mask: Int  // capacity - 1, for fast modulo (power-of-2)
+    
+    // Monotonically increasing indices; mapped to storage via & mask.
+    // headPtr: only written by producer, read by consumer
+    // tailPtr: only written by consumer, read by producer
+    fileprivate let headPtr: UnsafeMutablePointer<Int64>
+    fileprivate let tailPtr: UnsafeMutablePointer<Int64>
+    
+    /// Actual capacity is rounded up to the next power of 2.
+    init(minimumCapacity: Int) {
+        var pow2 = 1
+        while pow2 < minimumCapacity { pow2 <<= 1 }
+        self.capacity = pow2
+        self.mask = pow2 - 1
+        self.storage = .allocate(capacity: pow2)
+        self.storage.initialize(repeating: 0.0, count: pow2)
+        
+        self.headPtr = .allocate(capacity: 1)
+        self.headPtr.initialize(to: 0)
+        self.tailPtr = .allocate(capacity: 1)
+        self.tailPtr.initialize(to: 0)
+    }
+    
+    deinit {
+        storage.deinitialize(count: capacity)
+        storage.deallocate()
+        headPtr.deallocate()
+        tailPtr.deallocate()
+    }
+    
+    var availableToRead: Int {
+        Int(alvr_atomic_load_acquire(headPtr) - alvr_atomic_load_acquire(tailPtr))
+    }
+    
+    var availableToWrite: Int {
+        capacity - availableToRead
+    }
+    
+    /// Write samples from a Swift Array. Returns number of samples written.
+    /// Called by producer thread only.
+    @discardableResult
+    func write(_ data: [Float]) -> Int {
+        data.withUnsafeBufferPointer { ptr in
+            guard let base = ptr.baseAddress else { return 0 }
+            return write(base, count: data.count)
+        }
+    }
+    
+    /// Write samples from a raw pointer. Returns number of samples written.
+    /// Called by producer thread only.
+    @discardableResult
+    func write(_ data: UnsafePointer<Float>, count: Int) -> Int {
+        let head = alvr_atomic_load_acquire(headPtr)
+        let tail = alvr_atomic_load_acquire(tailPtr)
+        let space = capacity - Int(head - tail)
+        let toWrite = min(count, space)
+        guard toWrite > 0 else { return 0 }
+        
+        let startIdx = Int(head) & mask
+        if startIdx + toWrite <= capacity {
+            // No wrap: single memcpy
+            storage.advanced(by: startIdx).update(from: data, count: toWrite)
+        } else {
+            // Wrap-around: two memcpys
+            let first = capacity - startIdx
+            storage.advanced(by: startIdx).update(from: data, count: first)
+            storage.update(from: data.advanced(by: first), count: toWrite - first)
+        }
+        
+        alvr_atomic_store_release(headPtr, head + Int64(toWrite))
+        return toWrite
+    }
+    
+    /// Write samples from a raw Int16 pointer and convert to Float32.
+    /// Called by producer thread only.
+    @discardableResult
+    func write(pcm16 data: UnsafePointer<Int16>, count: Int) -> Int {
+        let head = alvr_atomic_load_acquire(headPtr)
+        let tail = alvr_atomic_load_acquire(tailPtr)
+        let space = capacity - Int(head - tail)
+        let toWrite = min(count, space)
+        guard toWrite > 0 else { return 0 }
+        
+        let startIdx = Int(head) & mask
+        if startIdx + toWrite <= capacity {
+            // No wrap
+            let dst = storage.advanced(by: startIdx)
+            for i in 0..<toWrite {
+                dst[i] = Float(data[i]) / 32768.0
+            }
+        } else {
+            // Wrap-around
+            let first = capacity - startIdx
+            let dst1 = storage.advanced(by: startIdx)
+            for i in 0..<first {
+                dst1[i] = Float(data[i]) / 32768.0
+            }
+            let dst2 = storage
+            let src2 = data.advanced(by: first)
+            let second = toWrite - first
+            for i in 0..<second {
+                dst2[i] = Float(src2[i]) / 32768.0
+            }
+        }
+        
+        alvr_atomic_store_release(headPtr, head + Int64(toWrite))
+        return toWrite
+    }
+    
+    /// Read samples into output buffer. Returns number of samples read.
+    /// Called by consumer thread only.
+    @discardableResult
+    func read(into output: UnsafeMutablePointer<Float>, count: Int) -> Int {
+        let head = alvr_atomic_load_acquire(headPtr)
+        let tail = alvr_atomic_load_acquire(tailPtr)
+        let available = Int(head - tail)
+        let toRead = min(count, available)
+        guard toRead > 0 else { return 0 }
+        
+        let startIdx = Int(tail) & mask
+        if startIdx + toRead <= capacity {
+            // No wrap: single memcpy
+            output.update(from: storage.advanced(by: startIdx), count: toRead)
+        } else {
+            // Wrap-around: two memcpys
+            let first = capacity - startIdx
+            output.update(from: storage.advanced(by: startIdx), count: first)
+            output.advanced(by: first).update(from: storage, count: toRead - first)
+        }
+        
+        alvr_atomic_store_release(tailPtr, tail + Int64(toRead))
+        return toRead
+    }
+    
+    /// Skip/discard samples. Returns number of samples skipped.
+    /// Called by consumer thread only.
+    @discardableResult
+    func skip(count: Int) -> Int {
+        let head = alvr_atomic_load_acquire(headPtr)
+        let tail = alvr_atomic_load_acquire(tailPtr)
+        let available = Int(head - tail)
+        let toSkip = min(count, available)
+        guard toSkip > 0 else { return 0 }
+        
+        alvr_atomic_store_release(tailPtr, tail + Int64(toSkip))
+        return toSkip
+    }
+}
+
+// ==========================================
+// Swift Native Audio Manager Implementation
+// ==========================================
+
+class SwiftAudioManager: NSObject {
+    static let shared = SwiftAudioManager()
+    
+    private var audioEngine: AVAudioEngine?
+    private var sourceNode: AVAudioSourceNode?
+    
+    private var audioConverter: AVAudioConverter?
+    private var targetFormat: AVAudioFormat?
+    private var micTargetBuffer: AVAudioPCMBuffer?
+    
+    // Lock-free ring buffer for game audio playback (SPSC: Rust writes, CoreAudio reads)
+    private var ringBuffer: LockFreeRingBuffer?
+    fileprivate var isRunning = false
+    fileprivate var sampleRate: Double = 48000.0
+    
+    // State lock to prevent ARC data races when reading/writing class references across threads
+    private var stateLock = NSLock()
+    
+    override init() {
+        super.init()
+    }
+    
+    func start(sampleRate: Double) {
+        stateLock.lock()
+        guard !isRunning else { 
+            stateLock.unlock()
+            return 
+        }
+        self.sampleRate = sampleRate
+        
+        // Create lock-free ring buffer (~2 seconds at 48kHz stereo, power-of-2 capacity)
+        let rb = LockFreeRingBuffer(minimumCapacity: 48000 * 2 * 2)
+        // Pre-fill 50ms silence to prevent immediate underflow clicks
+        rb.write([Float](repeating: 0.0, count: Int(sampleRate * 2 * 0.05)))
+        self.ringBuffer = rb
+        
+        let engine = AVAudioEngine()
+        self.audioEngine = engine
+        
+        // 1. Playback Setup (Game Audio)
+        let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 2, interleaved: true)!
+        
+        // Capture raw pointers locally so the audio render thread DOES NOT capture `self` or `rb`.
+        // This guarantees the real-time thread never touches ARC or takes locks!
+        let currentSampleRate = sampleRate
+        let rbStorage = rb.storage
+        let rbCapacity = rb.capacity
+        let rbMask = rb.mask
+        let rbHeadPtr = rb.headPtr
+        let rbTailPtr = rb.tailPtr
+        
+        let sourceNode = AVAudioSourceNode { (_, _, frameCount, outputData) -> OSStatus in
+            let samplesNeeded = Int(frameCount) * 2  // stereo interleaved
+            let abl = UnsafeMutableAudioBufferListPointer(outputData)
+            guard let outputBuffer = abl[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+            
+            // Lock-free read from raw pointers
+            let head = alvr_atomic_load_acquire(rbHeadPtr)
+            let tail = alvr_atomic_load_acquire(rbTailPtr)
+            var available = Int(head - tail)
+            var currentTail = tail
+            
+            // Dynamic Latency Control: catch up if lag exceeds 120ms
+            let maxLatencySamples = Int(currentSampleRate * 2 * 0.12) // 120ms threshold
+            if available > maxLatencySamples {
+                let targetLatencySamples = Int(currentSampleRate * 2 * 0.04) // 40ms target latency
+                let skipCount = available - targetLatencySamples
+                // Ensure even alignment to keep stereo L/R channel pairing correct
+                let alignedSkip = (skipCount / 2) * 2
+                if alignedSkip > 0 {
+                    currentTail += Int64(alignedSkip)
+                    available -= alignedSkip
+                    alvr_atomic_store_release(rbTailPtr, currentTail)
+                }
+            }
+            
+            let toRead = min(samplesNeeded, available)
+            if toRead > 0 {
+                let startIdx = Int(currentTail) & rbMask
+                if startIdx + toRead <= rbCapacity {
+                    outputBuffer.update(from: rbStorage.advanced(by: startIdx), count: toRead)
+                } else {
+                    let first = rbCapacity - startIdx
+                    outputBuffer.update(from: rbStorage.advanced(by: startIdx), count: first)
+                    outputBuffer.advanced(by: first).update(from: rbStorage, count: toRead - first)
+                }
+                alvr_atomic_store_release(rbTailPtr, currentTail + Int64(toRead))
+            }
+            
+            // Fill remainder with silence on underflow
+            if toRead < samplesNeeded {
+                for i in toRead..<samplesNeeded {
+                    outputBuffer[i] = 0.0
+                }
+            }
+            
+            return noErr
+        }
+        
+        self.sourceNode = sourceNode
+        engine.attach(sourceNode)
+        engine.connect(sourceNode, to: engine.outputNode, format: outputFormat)
+        
+        // 2. Recording Setup (Microphone) - only if permission is granted
+        if AVAudioSession.sharedInstance().recordPermission == .granted {
+            let inputNode = engine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            
+            let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48000.0, channels: 1, interleaved: false)!
+            self.targetFormat = targetFormat
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+            self.audioConverter = converter
+            
+            // Pre-allocate mic target buffer to prevent heap allocations in high-priority tap thread
+            self.micTargetBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: 48000)
+            
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] (buffer, time) in
+                self?.processMicrophoneBuffer(buffer)
+            }
+        } else {
+            print("Microphone permission not granted, skipping mic setup")
+        }
+        
+        // 3. Register Notifications for Audio Interruption and Route Changes
+        NotificationCenter.default.addObserver(self, selector: #selector(handleConfigurationChange), name: .AVAudioEngineConfigurationChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: nil)
+        
+        self.isRunning = true
+        stateLock.unlock()
+        
+        do {
+            try engine.start()
+            print("SwiftAudioManager started successfully at \(sampleRate) Hz")
+        } catch {
+            stateLock.lock()
+            NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: nil)
+            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
+            self.ringBuffer = nil
+            self.audioEngine = nil
+            self.sourceNode = nil
+            self.targetFormat = nil
+            self.audioConverter = nil
+            self.micTargetBuffer = nil
+            self.isRunning = false
+            stateLock.unlock()
+            print("Failed to start AVAudioEngine: \(error)")
+        }
+    }
+    
+    func stop() {
+        stateLock.lock()
+        guard isRunning else { 
+            stateLock.unlock()
+            return 
+        }
+        
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: nil)
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
+        
+        let engine = audioEngine
+        // Keep a strong reference to ring buffer to guarantee its raw pointers remain valid 
+        // until the audio engine has completely stopped running.
+        let rbToRelease = ringBuffer 
+        
+        self.audioEngine = nil
+        self.sourceNode = nil
+        self.audioConverter = nil
+        self.targetFormat = nil
+        self.micTargetBuffer = nil
+        self.ringBuffer = nil
+        self.isRunning = false
+        stateLock.unlock()
+        
+        // Stop engine outside of the state lock to prevent deadlock with internal tap threads!
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        
+        _ = rbToRelease // Keep alive until here
+        print("SwiftAudioManager stopped, ring buffer released")
+    }
+    
+    func putAudioData(data: UnsafePointer<Int16>, sampleCount: Int, rate: Double) {
+        stateLock.lock()
+        let running = self.isRunning
+        let rb = self.ringBuffer
+        stateLock.unlock()
+        
+        guard running, let ringBuffer = rb else { return }
+        
+        // Lock-free write & Int16->Float32 conversion (zero allocation)
+        ringBuffer.write(pcm16: data, count: sampleCount)
+    }
+    
+    private func processMicrophoneBuffer(_ buffer: AVAudioPCMBuffer) {
+        stateLock.lock()
+        let converter = self.audioConverter
+        let format = self.targetFormat
+        let targetBuf = self.micTargetBuffer
+        stateLock.unlock()
+        
+        guard let audioConverter = converter, let targetFormat = format, let targetBuffer = targetBuf else { return }
+        
+        let ratio = 48000.0 / buffer.format.sampleRate
+        let targetCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
+        
+        guard targetBuffer.frameCapacity >= targetCapacity else {
+            print("Warning: mic target buffer capacity \(targetBuffer.frameCapacity) is less than required \(targetCapacity)")
+            return
+        }
+        
+        // Set target buffer frame length to targetCapacity to allow AVAudioConverter to write into it
+        targetBuffer.frameLength = targetCapacity
+        
+        var error: NSError?
+        var hasProvided = false
+        let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+            if hasProvided {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            hasProvided = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        
+        audioConverter.convert(to: targetBuffer, error: &error, withInputFrom: inputBlock)
+        
+        if let err = error {
+            print("AVAudioConverter failed: \(err)")
+            return
+        }
+        
+        let frameLength = Int(targetBuffer.frameLength)
+        guard frameLength > 0, let int16Data = targetBuffer.int16ChannelData else { return }
+        
+        // Split the large PCM buffer into smaller chunks (e.g., 10ms / 480 frames)
+        // to fit within Rust's internal socket buffer limit (preventing silent drops)
+        // without needing a full rebuild and repack of the Rust library.
+        withExtendedLifetime(targetBuffer) {
+            let channelPointer = int16Data[0]
+            let chunkSize = 480 // 10ms chunks at 48kHz mono
+            var offset = 0
+            while offset < frameLength {
+                let count = min(chunkSize, frameLength - offset)
+                let rawPointer = UnsafeRawPointer(channelPointer.advanced(by: offset))
+                let byteCount = count * MemoryLayout<Int16>.size
+                
+                print("Mic Chunk Send: \(count) frames, \(byteCount) bytes (Offset: \(offset))")
+                alvr_send_microphone_packet(rawPointer.assumingMemoryBound(to: UInt8.self), UInt32(byteCount))
+                
+                offset += count
+            }
+        }
+    }
+    
+    func restartEngineWithCurrentSampleRate() {
+        stateLock.lock()
+        let currentSampleRate = self.sampleRate
+        let running = self.isRunning
+        stateLock.unlock()
+        
+        if running {
+            stop()
+            start(sampleRate: currentSampleRate)
+        }
+    }
+    
+    @objc private func handleConfigurationChange(_ notification: Notification) {
+        stateLock.lock()
+        let running = self.isRunning
+        stateLock.unlock()
+        
+        if running {
+            print("AVAudioEngine configuration changed, restarting engine...")
+            restartEngineWithCurrentSampleRate()
+        }
+    }
+    
+    @objc private func handleInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+        
+        switch type {
+        case .began:
+            print("AVAudioSession interruption began")
+        case .ended:
+            print("AVAudioSession interruption ended")
+            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) {
+                    print("Resuming audio session and restarting engine...")
+                    do {
+                        try AVAudioSession.sharedInstance().setActive(true)
+                        restartEngineWithCurrentSampleRate()
+                    } catch {
+                        print("Failed to reactivate AVAudioSession after interruption: \(error)")
+                    }
+                }
+            }
+        @unknown default:
+            break
+        }
+    }
+}
+
+func handleAudioPacketCallback(data: UnsafePointer<UInt8>?, len: UInt32, sampleRate: UInt32) {
+    guard let data = data else { return }
+    let sampleCount = Int(len) / MemoryLayout<Int16>.size
+    data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { ptr in
+        SwiftAudioManager.shared.putAudioData(data: ptr, sampleCount: sampleCount, rate: Double(sampleRate))
+    }
 }

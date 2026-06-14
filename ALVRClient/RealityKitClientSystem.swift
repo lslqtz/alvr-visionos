@@ -228,7 +228,7 @@ class RealityKitClientSystem : System {
             input_catcher.scale = simd_float3(input_catcher_depth * 4.0, input_catcher_depth * 4.0, input_catcher_depth * 4.0) // TODO: view tangents over 4.0? idk
             input_catcher.isEnabled = true
             
-            anchor.addChild(input_catcher)
+            content.add(input_catcher)
 
             content.add(videoPlaneA_L)
             content.add(videoPlaneB_L)
@@ -552,8 +552,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             )
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialA_L?.readsDepth = false
-                self.surfaceMaterialA_L?.writesDepth = false
+                self.surfaceMaterialA_L?.readsDepth = true
+                self.surfaceMaterialA_L?.writesDepth = true
             }
 #endif
       
@@ -563,8 +563,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             )
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialB_L?.readsDepth = false
-                self.surfaceMaterialB_L?.writesDepth = false
+                self.surfaceMaterialB_L?.readsDepth = true
+                self.surfaceMaterialB_L?.writesDepth = true
             }
 #endif
             self.surfaceMaterialC_L = try! await ShaderGraphMaterial(
@@ -573,8 +573,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             )
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialC_L?.readsDepth = false
-                self.surfaceMaterialC_L?.writesDepth = false
+                self.surfaceMaterialC_L?.readsDepth = true
+                self.surfaceMaterialC_L?.writesDepth = true
             }
 #endif
 
@@ -584,8 +584,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             )
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialA_R?.readsDepth = false
-                self.surfaceMaterialA_R?.writesDepth = false
+                self.surfaceMaterialA_R?.readsDepth = true
+                self.surfaceMaterialA_R?.writesDepth = true
             }
 #endif
             self.surfaceMaterialB_R = try! await ShaderGraphMaterial(
@@ -594,8 +594,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             )
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialB_R?.readsDepth = false
-                self.surfaceMaterialB_R?.writesDepth = false
+                self.surfaceMaterialB_R?.readsDepth = true
+                self.surfaceMaterialB_R?.writesDepth = true
             }
 #endif
             self.surfaceMaterialC_R = try! await ShaderGraphMaterial(
@@ -608,8 +608,8 @@ class RealityKitClientSystemCorrectlyAssociated : System {
             // and hands
 #if XCODE_BETA_16
             if #available(visionOS 2.0, *) {
-                self.surfaceMaterialC_R?.readsDepth = false
-                self.surfaceMaterialC_R?.writesDepth = false
+                self.surfaceMaterialC_R?.readsDepth = true
+                self.surfaceMaterialC_R?.writesDepth = true
             }
 #endif
         }
@@ -1154,6 +1154,13 @@ class RealityKitClientSystemCorrectlyAssociated : System {
         }
         
         input_catcher.isEnabled = !(WorldTracker.shared.eyeTrackingActive && !WorldTracker.shared.eyeIsMipmapMethod)
+        
+        if let backdrop_headanchor = context.scene.findEntity(named: "backdrop_headanchor") {
+            let headTransform = backdrop_headanchor.transform
+            let forwardVector = -headTransform.matrix.columns.2.asFloat3()
+            input_catcher.position = headTransform.translation + forwardVector * 1.5
+            input_catcher.orientation = headTransform.rotation * simd_quatf(angle: 1.5708, axis: simd_float3(1,0,0))
+        }
         
         let settings = ALVRClientApp.gStore.settings
         

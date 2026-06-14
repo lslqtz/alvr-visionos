@@ -1,0 +1,4 @@
+{
+  "summary": "A standalone Rust CLI diagnostic tool main source code (src/main.rs) to scan Windows audio devices, print all cpal-supported configurations, and test WASAPI stream creation with ALVR's requested 1-channel 48kHz i16 format.",
+  "updatedAt": "2026-06-14T03:33:09.504956Z"
+}

@@ -1,0 +1,4 @@
+{
+  "summary": "A standalone Rust CLI diagnostic tool configuration file (Cargo.toml) to test cpal WASAPI stream creation on Windows. Uses cpal v0.15.",
+  "updatedAt": "2026-06-14T03:33:04.609239Z"
+}
